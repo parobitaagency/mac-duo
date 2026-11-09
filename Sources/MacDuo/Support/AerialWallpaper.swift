@@ -48,7 +48,12 @@ enum AerialWallpaper {
     /// The first frame of the current aerial, or nil when the wallpaper is
     /// not an aerial or its video is not on disk.
     static func currentFrame(maxPixelSize: Int) -> (image: CGImage, name: String)? {
-        guard let id = currentAssetID() else { return nil }
+        guard let id = currentAssetID() else {
+            let readable = FileManager.default.isReadableFile(atPath: store.path)
+            FileLog.write("lock", "aerial: none found (store readable \(readable))")
+            return nil
+        }
+        FileLog.write("lock", "aerial: asset \(id)")
         guard let url = videoURL(for: id) else {
             FileLog.write("lock", "aerial \(id): no video on disk")
             return nil
