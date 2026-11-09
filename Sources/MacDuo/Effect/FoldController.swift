@@ -58,6 +58,12 @@ final class FoldController {
     /// Set on wake: the next samples may start the fold in reverse, following
     /// the lid as it opens.
     @ObservationIgnored private var unfoldPending = false
+    /// Where the lid has been holding while the fold is up, and since when.
+    @ObservationIgnored private var stillAnchor: (angle: Double, since: CFTimeInterval)?
+    /// A lid held within this many degrees counts as still.
+    private static let stillTolerance: Double = 1.5
+    /// A fold whose lid stays still this long lets go of the screen.
+    private static let stillRelease: CFTimeInterval = 2
 
     /// The focus-on-wake timeline: the frosted desktop comes into focus.
     private struct Reveal {
@@ -207,6 +213,7 @@ final class FoldController {
         default:
             break
         }
+        if isActive, releaseIfStill(angle: tracker.angle, at: time) { return }
         if isActive, !overlay.isVisible, !captureInFlight {
             present()
         }
@@ -282,6 +289,7 @@ final class FoldController {
         }
         isActive = true
         activationTime = time
+        stillAnchor = nil
         drewSettledFrame = false
         streamRestarts = 0
         // Ease in from the start angle, so a lid already past it does not pop.
@@ -298,6 +306,22 @@ final class FoldController {
         Log.fold.notice("fold begins at \(self.monitor.tracker.angle, format: .fixed(precision: 1))°, velocity \(self.monitor.tracker.velocity, format: .fixed(precision: 0))°/s")
         FileLog.write("fold", String(format: "begins at %.1f°, velocity %.0f°/s, live %d", monitor.tracker.angle, monitor.tracker.velocity, preferences.effect.livePicture ? 1 : 0))
         present()
+    }
+
+    /// The lid has stopped partway: after a moment the fold goes and the
+    /// desktop comes back. Moving the lid down again starts a new fold.
+    private func releaseIfStill(angle: Double, at time: CFTimeInterval) -> Bool {
+        guard let anchor = stillAnchor, abs(angle - anchor.angle) <= Self.stillTolerance else {
+            stillAnchor = (angle, time)
+            return false
+        }
+        guard time - anchor.since >= Self.stillRelease else { return false }
+        stillAnchor = nil
+        FileLog.write("fold", String(format: "lid still at %.1f° for %.0f s: fold released", angle, Self.stillRelease))
+        decider.forceIdle()
+        endFold()
+        monitor.setRate(.watching)
+        return true
     }
 
     /// Starts the fold in reverse on wake: the picture appears at the fold
