@@ -75,6 +75,27 @@ private struct GeneralSettings: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Section {
+                Toggle("Clear the fold when the lid is still", isOn: $preferences.clearsWhenStill)
+                    .disabled(!controller.sensorAvailable)
+                if preferences.clearsWhenStill {
+                    LabeledContent("After") {
+                        HStack {
+                            Slider(value: $preferences.stillDelay, in: 1...10, step: 0.5)
+                            Text(String(format: "%.1f s", preferences.stillDelay))
+                                .monospacedDigit()
+                                .frame(width: 44, alignment: .trailing)
+                        }
+                    }
+                }
+                Text("A lid left partway eases back to the clear desktop. Move it again to fold.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Toggle("Hide the menu bar icon", isOn: $preferences.hidesMenuBarIcon)
+                Text("Open Mac Duo from Finder or Spotlight to bring it back.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 Toggle("Show lid angle in the menu bar", isOn: $preferences.showsAngleInMenuBar)
                     .disabled(!controller.sensorAvailable)
                 Toggle("Check for updates automatically", isOn: $preferences.checksForUpdates)

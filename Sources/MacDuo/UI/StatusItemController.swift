@@ -29,6 +29,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     private var startRow: MenuSliderRow!
     private var frostRow: MenuSliderRow!
     private var darkRow: MenuSliderRow!
+    private var stillRow: MenuToggleRow!
+    private var stillDelayRow: MenuSliderRow!
 
     init(preferences: Preferences, controller: FoldController, windows: WindowCoordinator, updates: UpdateCoordinator) {
         self.preferences = preferences
@@ -41,6 +43,7 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         statusItem.menu = menu
         statusItem.button?.image = MenuBarGlyph.image()
         statusItem.button?.imagePosition = .imageLeading
+        statusItem.isVisible = !preferences.hidesMenuBarIcon
         refresh()
         let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
@@ -116,7 +119,20 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         awakeRow = MenuToggleRow(title: "Keep Awake When Closed", isOn: SleepControl.isSleepDisabled()) { [weak self] on in
             self?.changeSleep(disabled: on)
         }
-        for row in [liveRow!, wakeRow!, awakeRow!, angleRow!, loginRow!] {
+        stillRow = MenuToggleRow(title: "Clear When Lid Is Still", isOn: preferences.clearsWhenStill) { [weak self] on in
+            self?.preferences.clearsWhenStill = on
+        }
+        for row in [liveRow!, wakeRow!, stillRow!] {
+            menu.addItem(viewItem(row))
+        }
+        stillDelayRow = MenuSliderRow(title: "Clears after", value: preferences.stillDelay, range: 1...10, step: 0.5,
+                                      format: { String(format: "%.1f s", $0) }) { [weak self] value in
+            self?.preferences.stillDelay = value
+        }
+        let delayItem = NSMenuItem()
+        delayItem.view = stillDelayRow
+        menu.addItem(delayItem)
+        for row in [awakeRow!, angleRow!, loginRow!] {
             menu.addItem(viewItem(row))
         }
         menu.addItem(.separator())
@@ -129,6 +145,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         menu.addItem(settings)
         updateItem.target = self
         menu.addItem(updateItem)
+        let hide = NSMenuItem(title: "Hide Menu Bar Icon", action: #selector(hideIcon), keyEquivalent: "")
+        hide.target = self
+        hide.toolTip = "Open Mac Duo again from Finder or Spotlight to bring it back."
+        menu.addItem(hide)
         let about = NSMenuItem(title: "About Mac Duo", action: #selector(openAbout), keyEquivalent: "")
         about.target = self
         menu.addItem(about)
@@ -176,6 +196,8 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         darkRow.set(value: preferences.effect.dimming)
         liveRow.set(isOn: preferences.effect.livePicture)
         wakeRow.set(isOn: preferences.focusOnWake)
+        stillRow.set(isOn: preferences.clearsWhenStill)
+        stillDelayRow.set(value: preferences.stillDelay)
         angleRow.set(isOn: preferences.showsAngleInMenuBar)
         loginRow.set(isOn: LaunchAtLogin.isEnabled)
         if !isChangingSleep { awakeRow.set(isOn: SleepControl.isSleepDisabled()) }
@@ -199,6 +221,9 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func refresh() {
+        if statusItem.isVisible == preferences.hidesMenuBarIcon {
+            statusItem.isVisible = !preferences.hidesMenuBarIcon
+        }
         guard let button = statusItem.button else { return }
         let angle = Int(controller.angle.rounded())
         let active = controller.isActive
@@ -244,6 +269,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         } else {
             Task { await updates.check(interactive: true) }
         }
+    }
+
+    @objc private func hideIcon() {
+        preferences.hidesMenuBarIcon = true
+        FileLog.write("app", "menu bar icon hidden")
+    }
+
+    /// Opening the app again (Finder, Spotlight, Dock) brings the icon back.
+    func showIcon() {
+        preferences.hidesMenuBarIcon = false
     }
 
     @objc private func quit() {

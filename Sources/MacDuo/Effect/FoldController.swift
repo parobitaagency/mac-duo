@@ -58,12 +58,11 @@ final class FoldController {
     /// Set on wake: the next samples may start the fold in reverse, following
     /// the lid as it opens.
     @ObservationIgnored private var unfoldPending = false
-    /// Where the lid has been holding while the fold is up, and since when.
-    @ObservationIgnored private var stillAnchor: (angle: Double, since: CFTimeInterval)?
-    /// A lid held within this many degrees counts as still.
-    private static let stillTolerance: Double = 1.5
-    /// A fold whose lid stays still this long lets go of the screen.
-    private static let stillRelease: CFTimeInterval = 2
+    /// Where and since when the lid has rested, for clearing a held fold.
+    @ObservationIgnored private var stillAnchor: (angle: Double, since: CFTimeInterval) = (0, 0)
+    /// A running clear-for-stillness: the fold eases back to open from here.
+    @ObservationIgnored private var stillClear: (startedAt: CFTimeInterval, from: Double)?
+    private static let stillClearDuration: CFTimeInterval = 0.7
 
     /// The focus-on-wake timeline: the frosted desktop comes into focus.
     private struct Reveal {
@@ -213,7 +212,6 @@ final class FoldController {
         default:
             break
         }
-        if isActive, releaseIfStill(angle: tracker.angle, at: time) { return }
         if isActive, !overlay.isVisible, !captureInFlight {
             present()
         }
@@ -289,8 +287,9 @@ final class FoldController {
         }
         isActive = true
         activationTime = time
-        stillAnchor = nil
         drewSettledFrame = false
+        stillClear = nil
+        stillAnchor = (monitor.tracker.angle, time)
         streamRestarts = 0
         // Ease in from the start angle, so a lid already past it does not pop.
         spring.snap(to: snapping ? monitor.tracker.angle : max(monitor.tracker.angle, preferences.effect.startAngle))
@@ -306,22 +305,6 @@ final class FoldController {
         Log.fold.notice("fold begins at \(self.monitor.tracker.angle, format: .fixed(precision: 1))°, velocity \(self.monitor.tracker.velocity, format: .fixed(precision: 0))°/s")
         FileLog.write("fold", String(format: "begins at %.1f°, velocity %.0f°/s, live %d", monitor.tracker.angle, monitor.tracker.velocity, preferences.effect.livePicture ? 1 : 0))
         present()
-    }
-
-    /// The lid has stopped partway: after a moment the fold goes and the
-    /// desktop comes back. Moving the lid down again starts a new fold.
-    private func releaseIfStill(angle: Double, at time: CFTimeInterval) -> Bool {
-        guard let anchor = stillAnchor, abs(angle - anchor.angle) <= Self.stillTolerance else {
-            stillAnchor = (angle, time)
-            return false
-        }
-        guard time - anchor.since >= Self.stillRelease else { return false }
-        stillAnchor = nil
-        FileLog.write("fold", String(format: "lid still at %.1f° for %.0f s: fold released", angle, Self.stillRelease))
-        decider.forceIdle()
-        endFold()
-        monitor.setRate(.watching)
-        return true
     }
 
     /// Starts the fold in reverse on wake: the picture appears at the fold
@@ -439,6 +422,7 @@ final class FoldController {
             return
         }
         let target = scrubAngle ?? monitor.tracker.extrapolatedAngle(at: now)
+        if stepStillClear(at: now) { return }
         let wasSettled = spring.isSettled(at: target, tolerance: 0.02)
         spring.advance(toward: target, dt: dt)
         // A lid held still with nothing new on screen needs no new frame;
@@ -449,6 +433,46 @@ final class FoldController {
     }
 
     @ObservationIgnored private var drewSettledFrame = false
+
+    /// A lid left partway clears the fold after the chosen delay, easing back
+    /// along the same curve; moving the lid again cancels it. Returns true
+    /// when it drew this frame.
+    private func stepStillClear(at now: CFTimeInterval) -> Bool {
+        let lid = monitor.tracker.angle
+        if abs(lid - stillAnchor.angle) > 1.5 {
+            stillAnchor = (lid, now)
+            if let clear = stillClear {
+                // The lid moved during the clear: hand back to the spring from
+                // where the picture is, so nothing jumps.
+                spring.snap(to: clearAngle(clear, at: now))
+                stillClear = nil
+            }
+            return false
+        }
+        let effect = preferences.effect
+        if stillClear == nil {
+            guard preferences.clearsWhenStill, !isPreviewing, scrubAngle == nil,
+                  lid > 12, spring.value < effect.startAngle,
+                  now - stillAnchor.since >= max(preferences.stillDelay, 0.5) else { return false }
+            stillClear = (now, spring.value)
+            FileLog.write("fold", String(format: "lid still at %.1f° for %.1f s: clearing", lid, preferences.stillDelay))
+        }
+        guard let clear = stillClear else { return false }
+        draw(angle: clearAngle(clear, at: now), at: now)
+        if now - clear.startedAt >= Self.stillClearDuration {
+            stillClear = nil
+            // Idle, not armed: the next deliberate close starts a new fold.
+            decider.forceIdle()
+            endFold()
+        }
+        return true
+    }
+
+    private func clearAngle(_ clear: (startedAt: CFTimeInterval, from: Double), at now: CFTimeInterval) -> Double {
+        let t = min(max((now - clear.startedAt) / Self.stillClearDuration, 0), 1)
+        let eased = t * t * (3 - 2 * t)
+        return clear.from + (preferences.effect.startAngle - clear.from) * eased
+    }
 
     private func draw(angle: Double, at time: CFTimeInterval) {
         overlay.render(FrameParameters.make(effect: preferences.effect, screenSize: overlay.screenSize, angle: angle, time: time))

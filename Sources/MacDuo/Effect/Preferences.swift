@@ -19,8 +19,12 @@ final class Preferences {
         static let lastUpdateCheck = "lastUpdateCheck"
         static let skippedUpdateVersion = "skippedUpdateVersion"
         static let effectSchema = "effectSchema"
+        static let clearsWhenStill = "clearsWhenStill"
+        static let stillDelay = "stillDelay"
+        static let hidesMenuBarIcon = "hidesMenuBarIcon"
         static let all = [effect, isEnabled, focusOnWake, showsAngleInMenuBar, checksForUpdates,
-                          hasCompletedOnboarding, lastUpdateCheck, skippedUpdateVersion]
+                          hasCompletedOnboarding, lastUpdateCheck, skippedUpdateVersion,
+                          clearsWhenStill, stillDelay, hidesMenuBarIcon]
     }
 
     private let defaults: UserDefaults
@@ -40,6 +44,17 @@ final class Preferences {
     }
     var checksForUpdates: Bool {
         didSet { defaults.set(checksForUpdates, forKey: Key.checksForUpdates) }
+    }
+    /// Clear the fold when the lid rests partway for `stillDelay` seconds.
+    var clearsWhenStill: Bool {
+        didSet { defaults.set(clearsWhenStill, forKey: Key.clearsWhenStill) }
+    }
+    var stillDelay: Double {
+        didSet { defaults.set(stillDelay, forKey: Key.stillDelay) }
+    }
+    /// The menu bar item is hidden; opening the app again shows it.
+    var hidesMenuBarIcon: Bool {
+        didSet { defaults.set(hidesMenuBarIcon, forKey: Key.hidesMenuBarIcon) }
     }
     var hasCompletedOnboarding: Bool {
         didSet { defaults.set(hasCompletedOnboarding, forKey: Key.hasCompletedOnboarding) }
@@ -62,6 +77,9 @@ final class Preferences {
             Key.showsAngleInMenuBar: false,
             Key.checksForUpdates: false, // a local build: the upstream update would replace it
             Key.hasCompletedOnboarding: false,
+            Key.clearsWhenStill: true,
+            Key.stillDelay: 2.0,
+            Key.hidesMenuBarIcon: false,
         ])
         // The look was retuned in schema 2 (no sheen or grain, reference
         // geometry); settings saved before that start again from Duo.
@@ -76,6 +94,9 @@ final class Preferences {
         showsAngleInMenuBar = defaults.bool(forKey: Key.showsAngleInMenuBar)
         checksForUpdates = defaults.bool(forKey: Key.checksForUpdates)
         hasCompletedOnboarding = defaults.bool(forKey: Key.hasCompletedOnboarding)
+        clearsWhenStill = defaults.bool(forKey: Key.clearsWhenStill)
+        stillDelay = defaults.double(forKey: Key.stillDelay)
+        hidesMenuBarIcon = defaults.bool(forKey: Key.hidesMenuBarIcon)
         lastUpdateCheck = defaults.object(forKey: Key.lastUpdateCheck) as? Date
         skippedUpdateVersion = defaults.string(forKey: Key.skippedUpdateVersion)
     }
@@ -91,6 +112,9 @@ final class Preferences {
         focusOnWake = defaults.bool(forKey: Key.focusOnWake)
         showsAngleInMenuBar = defaults.bool(forKey: Key.showsAngleInMenuBar)
         checksForUpdates = defaults.bool(forKey: Key.checksForUpdates)
+        clearsWhenStill = defaults.bool(forKey: Key.clearsWhenStill)
+        stillDelay = defaults.double(forKey: Key.stillDelay)
+        hidesMenuBarIcon = defaults.bool(forKey: Key.hidesMenuBarIcon)
         lastUpdateCheck = nil
         skippedUpdateVersion = nil
     }
