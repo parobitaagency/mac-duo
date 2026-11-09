@@ -66,6 +66,9 @@ final class FoldController {
     @ObservationIgnored private var wallpaper: CGImage?
     /// The running unfold plays over the lock screen with the wallpaper.
     @ObservationIgnored private var lockedUnfold = false
+    /// The pending unfold comes from an unlock: with the lid already open
+    /// it plays nothing (no timed reveal).
+    @ObservationIgnored private var unfoldFromUnlock = false
     /// Where and since when the lid has rested, for clearing a held fold.
     @ObservationIgnored private var stillAnchor: (angle: Double, since: CFTimeInterval) = (0, 0)
     /// A running clear-for-stillness: the fold eases back to open from here.
@@ -303,7 +306,8 @@ final class FoldController {
         spring.snap(to: snapping ? monitor.tracker.angle : max(monitor.tracker.angle, preferences.effect.startAngle))
         snapshotTimer?.invalidate()
         snapshotTimer = nil
-        if !snapping, !unfoldPending {
+        if isScreenLocked { heldPicture = nil }
+        if !snapping, !unfoldPending, !isScreenLocked {
             // Remember the desktop for the unfold after wake.
             Task { [weak self] in
                 guard let self, let image = await self.snapshot.capture() else { return }
@@ -328,10 +332,12 @@ final class FoldController {
             heldPicture = nil
             // Woken with the lid already open (a key press, an idle display):
             // nothing to follow, so the timed focus-on-wake stands in.
-            if !isScreenLocked, !isActive, !lockedUnfold { scheduleReveal() }
+            if !isScreenLocked, !isActive, !lockedUnfold, !unfoldFromUnlock { scheduleReveal() }
             lockedUnfold = false
+            unfoldFromUnlock = false
             return
         }
+        unfoldFromUnlock = false
         lockedUnfold = locked
         reveal = nil
         decider.forceActive(at: time)
@@ -361,7 +367,7 @@ final class FoldController {
 
     private func present() {
         guard let screen = NSScreen.builtIn else { return }
-        if lockedUnfold, let image = wallpaper {
+        if lockedUnfold || isScreenLocked, let image = wallpaper {
             overlay.aboveLockScreen = true
             overlay.showStill(image, on: screen) { [weak self] in self?.startDisplayLink() }
             return
@@ -582,6 +588,7 @@ final class FoldController {
             MainActor.assumeIsolated {
                 self?.isScreenLocked = true
                 self?.unfoldPending = false
+                self?.loadWallpaper()
             }
         }
         distributed.addObserver(forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
@@ -589,14 +596,26 @@ final class FoldController {
                 guard let self else { return }
                 let wasLocked = self.isScreenLocked
                 self.isScreenLocked = false
+                let slept = self.sleptSinceUnlock
                 self.sleptSinceUnlock = false
-                // The unfold, if any, already played over the lock screen.
-                // Unlocking plays nothing; a wallpaper fold still up gives
-                // way to the desktop.
                 self.unfoldPending = false
-                if wasLocked, self.lockedUnfold, self.isActive {
-                    self.decider.forceIdle()
-                    self.endFold()
+                guard wasLocked, !self.isSuspended else { return }
+                if self.lockedUnfold, self.isActive {
+                    // Unlocked while the wallpaper fold is up (Touch ID, or a
+                    // quick wake that needs no password). Lid still opening:
+                    // carry on with the desktop. Already open: just clear.
+                    if self.monitor.tracker.angle < self.preferences.effect.startAngle {
+                        self.swapToDesktopUnfold()
+                    } else {
+                        self.decider.forceIdle()
+                        self.endFold()
+                    }
+                } else if slept, !self.isActive {
+                    // Unlocked before the wallpaper fold began: unfold the
+                    // desktop if the lid is still opening, else nothing.
+                    self.lockedUnfold = false
+                    self.unfoldFromUnlock = true
+                    self.armUnfold()
                 }
             }
         }
@@ -650,9 +669,15 @@ final class FoldController {
             sleptSinceUnlock = false
             armUnfold()
         } else if preferences.isEnabled, wallpaper != nil {
-            // Locked: unfold over the lock screen, from the wallpaper.
-            lockedUnfold = true
-            unfoldPending = true
+            // Locked. A short sleep often unlocks by itself a moment later;
+            // give it a quarter second, then unfold over the lock screen
+            // from the wallpaper.
+            Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let self, self.isScreenLocked, !self.isSuspended, !self.isActive else { return }
+                self.lockedUnfold = true
+                self.unfoldPending = true
+            }
         }
     }
 
@@ -700,6 +725,18 @@ final class FoldController {
         context.draw(decoded, in: CGRect(x: (CGFloat(width) - drawn.width) / 2, y: (CGFloat(height) - drawn.height) / 2,
                                          width: drawn.width, height: drawn.height))
         return context.makeImage()
+    }
+
+    /// Replaces the wallpaper fold over the lock screen with the desktop
+    /// fold, at the same angle.
+    private func swapToDesktopUnfold() {
+        lockedUnfold = false
+        isActive = false
+        stopDisplayLink()
+        overlay.dismiss(animated: false)
+        decider.forceIdle()
+        unfoldFromUnlock = true
+        beginUnfold(tracker: monitor.tracker, at: CACurrentMediaTime())
     }
 
     private func armUnfold() {
