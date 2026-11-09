@@ -353,6 +353,8 @@ extension GeneralSettings {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.message = "Choose the picture your lock screen shows"
+        // Start where macOS keeps its wallpapers.
+        panel.directoryURL = URL(fileURLWithPath: "/System/Library/Desktop Pictures", isDirectory: true)
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         preferences.lockScreenPicture = url.path
