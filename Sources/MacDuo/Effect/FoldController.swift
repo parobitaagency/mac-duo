@@ -516,7 +516,6 @@ final class FoldController {
             MainActor.assumeIsolated {
                 self?.isScreenLocked = true
                 self?.unfoldPending = false
-                self?.heldPicture = nil
             }
         }
         distributed.addObserver(forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
@@ -524,7 +523,7 @@ final class FoldController {
                 guard let self else { return }
                 let wasLocked = self.isScreenLocked
                 self.isScreenLocked = false
-                if wasLocked, !self.isSuspended { self.scheduleReveal() }
+                if wasLocked, !self.isSuspended { self.armUnfold() }
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
@@ -569,13 +568,21 @@ final class FoldController {
         Log.app.notice("resume, locked \(self.isScreenLocked)")
         FileLog.write("app", "resume, screen locked \(isScreenLocked)")
         monitor.resetBaseline()
-        if !isScreenLocked, heldPicture != nil || preferences.effect.livePicture {
-            // Follow the lid from the first sample after wake.
+        // Poll fast from the start: the lid is usually still opening.
+        monitor.setRate(.moving)
+        if !isScreenLocked { armUnfold() }
+    }
+
+    /// After wake, or after the unlock that follows it: the next sample
+    /// starts the fold in reverse if the lid is still below the start angle.
+    /// Never while the screen is locked.
+    private func armUnfold() {
+        guard !isScreenLocked else { return }
+        if heldPicture != nil || preferences.effect.livePicture {
             unfoldPending = true
             monitor.setRate(.moving)
         } else {
-            monitor.setRate(.resting)
-            if !isScreenLocked { scheduleReveal() }
+            scheduleReveal()
         }
     }
 
