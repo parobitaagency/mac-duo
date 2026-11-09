@@ -669,15 +669,11 @@ final class FoldController {
             sleptSinceUnlock = false
             armUnfold()
         } else if preferences.isEnabled, wallpaper != nil {
-            // Locked. A short sleep often unlocks by itself a moment later;
-            // give it a quarter second, then unfold over the lock screen
-            // from the wallpaper.
-            Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(250))
-                guard let self, self.isScreenLocked, !self.isSuspended, !self.isActive else { return }
-                self.lockedUnfold = true
-                self.unfoldPending = true
-            }
+            // Locked: unfold over the lock screen from the wallpaper, from
+            // the first sample. If a short sleep then unlocks by itself, the
+            // unlock hands over to the desktop at the same angle.
+            lockedUnfold = true
+            unfoldPending = true
         }
     }
 
