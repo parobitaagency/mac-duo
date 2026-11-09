@@ -64,6 +64,9 @@ final class FoldController {
     /// The desktop picture, loaded at sleep: what a locked Mac shows behind
     /// the lock screen, so the unfold over it never reveals the desktop.
     @ObservationIgnored private var wallpaper: CGImage?
+    /// The wallpaper as drawn on screen, captured while unlocked.
+    @ObservationIgnored private var capturedWallpaper: CGImage?
+    @ObservationIgnored private var wallpaperCaptureRunning = false
     /// The running unfold plays over the lock screen with the wallpaper.
     @ObservationIgnored private var lockedUnfold = false
     /// The pending unfold comes from an unlock: with the lid already open
@@ -119,6 +122,22 @@ final class FoldController {
             await snapshot.warm()
             try? await Task.sleep(for: .milliseconds(600))
             await stream.warm()
+            refreshWallpaperCapture()
+        }
+    }
+
+    /// Captures the wallpaper window while the screen is unlocked, so a
+    /// locked fold shows exactly what the lock screen has behind it.
+    private func refreshWallpaperCapture() {
+        guard !isScreenLocked, !isSuspended, !wallpaperCaptureRunning, ScreenRecordingPermission.isGranted else { return }
+        wallpaperCaptureRunning = true
+        Task { [weak self] in
+            let image = await WallpaperCapture.capture()
+            guard let self else { return }
+            self.wallpaperCaptureRunning = false
+            guard let image else { return }
+            self.capturedWallpaper = image
+            if self.preferences.lockScreenPicture.isEmpty { self.wallpaper = image }
         }
     }
 
@@ -308,6 +327,7 @@ final class FoldController {
         snapshotTimer = nil
         if isScreenLocked { heldPicture = nil }
         if !snapping, !unfoldPending, !isScreenLocked {
+            refreshWallpaperCapture()
             // Remember the desktop for the unfold after wake.
             Task { [weak self] in
                 guard let self, let image = await self.snapshot.capture() else { return }
@@ -599,6 +619,10 @@ final class FoldController {
                 let slept = self.sleptSinceUnlock
                 self.sleptSinceUnlock = false
                 self.unfoldPending = false
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(2))
+                    self?.refreshWallpaperCapture()
+                }
                 guard wasLocked, !self.isSuspended else { return }
                 if self.lockedUnfold, self.isActive {
                     // Unlocked while the wallpaper fold is up (Touch ID, or a
@@ -687,6 +711,10 @@ final class FoldController {
 
     private func loadWallpaper() {
         let chosen = preferences.lockScreenPicture
+        if chosen.isEmpty, let capturedWallpaper {
+            wallpaper = capturedWallpaper
+            return
+        }
         let custom = chosen.isEmpty ? nil : URL(fileURLWithPath: chosen)
         guard let screen = NSScreen.builtIn,
               let url = custom.flatMap({ FileManager.default.fileExists(atPath: $0.path) ? $0 : nil })
