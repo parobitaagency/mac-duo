@@ -51,6 +51,13 @@ final class FoldController {
     @ObservationIgnored private var activationTime: CFTimeInterval = 0
     @ObservationIgnored private var permissionTimer: Timer?
     @ObservationIgnored private var lastPermission = ScreenRecordingPermission.isGranted
+    /// The desktop as it was when the lid last came down. Kept through sleep
+    /// so the unfold on wake has a picture on its very first frame, instead
+    /// of waiting for the capture to warm up again.
+    @ObservationIgnored private var heldPicture: CGImage?
+    /// Set on wake: the next samples may start the fold in reverse, following
+    /// the lid as it opens.
+    @ObservationIgnored private var unfoldPending = false
 
     /// The focus-on-wake timeline: the frosted desktop comes into focus.
     private struct Reveal {
@@ -180,6 +187,9 @@ final class FoldController {
         }
 
         let effect = preferences.effect
+        if unfoldPending {
+            beginUnfold(tracker: tracker, at: time)
+        }
         decider.startAngle = effect.startAngle
         decider.armCeiling = Self.armCeiling
         let previous = decider.phase
@@ -278,9 +288,38 @@ final class FoldController {
         spring.snap(to: snapping ? monitor.tracker.angle : max(monitor.tracker.angle, preferences.effect.startAngle))
         snapshotTimer?.invalidate()
         snapshotTimer = nil
+        if !snapping, !unfoldPending {
+            // Remember the desktop for the unfold after wake.
+            Task { [weak self] in
+                guard let self, let image = await self.snapshot.capture() else { return }
+                self.heldPicture = image
+            }
+        }
         Log.fold.notice("fold begins at \(self.monitor.tracker.angle, format: .fixed(precision: 1))°, velocity \(self.monitor.tracker.velocity, format: .fixed(precision: 0))°/s")
         FileLog.write("fold", String(format: "begins at %.1f°, velocity %.0f°/s, live %d", monitor.tracker.angle, monitor.tracker.velocity, preferences.effect.livePicture ? 1 : 0))
         present()
+    }
+
+    /// Starts the fold in reverse on wake: the picture appears at the fold
+    /// the lid is at now and clears as the lid opens, on the same curve as
+    /// the close. Never over a locked screen.
+    private func beginUnfold(tracker: AngleTracker, at time: CFTimeInterval) {
+        unfoldPending = false
+        let effect = preferences.effect
+        guard preferences.isEnabled, !isScreenLocked, !isActive, !isPreviewing,
+              ScreenRecordingPermission.isGranted,
+              tracker.angle < effect.startAngle else {
+            heldPicture = nil
+            // Woken with the lid already open (a key press, an idle display):
+            // nothing to follow, so the timed focus-on-wake stands in.
+            if !isScreenLocked, !isActive { scheduleReveal() }
+            return
+        }
+        reveal = nil
+        decider.forceActive(at: time)
+        FileLog.write("fold", String(format: "unfold on wake from %.1f°, held picture %d", tracker.angle, heldPicture == nil ? 0 : 1))
+        beginFold(at: time, snapping: true)
+        if isActive, overlay.isVisible, displayLink == nil { startDisplayLink() }
     }
 
     private func endFold() {
@@ -292,6 +331,7 @@ final class FoldController {
         overlay.dismiss(animated: true)
         snapshot.discard()
         // Let the fade finish before the stream goes away.
+        if monitor.tracker.angle >= preferences.effect.startAngle { heldPicture = nil }
         Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(320))
             guard let self, !self.isActive, self.decider.phase != .armed else { return }
@@ -313,14 +353,14 @@ final class FoldController {
                 overlay.absorb(frame)
                 return
             }
-            if let image = snapshot.image {
+            if let image = snapshot.image ?? heldPicture {
                 overlay.seed(image)
                 return
             }
             requestSeed()
             return
         }
-        if let image = snapshot.image {
+        if let image = snapshot.image ?? heldPicture {
             overlay.showStill(image, on: screen) { [weak self] in self?.startDisplayLink() }
             return
         }
@@ -473,7 +513,11 @@ final class FoldController {
             MainActor.assumeIsolated { self?.resume() }
         }
         distributed.addObserver(forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.isScreenLocked = true }
+            MainActor.assumeIsolated {
+                self?.isScreenLocked = true
+                self?.unfoldPending = false
+                self?.heldPicture = nil
+            }
         }
         distributed.addObserver(forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -515,6 +559,7 @@ final class FoldController {
         isPreviewing = false
         isActive = false
         captureInFlight = false
+        unfoldPending = false
         decider.forceIdle()
     }
 
@@ -524,8 +569,14 @@ final class FoldController {
         Log.app.notice("resume, locked \(self.isScreenLocked)")
         FileLog.write("app", "resume, screen locked \(isScreenLocked)")
         monitor.resetBaseline()
-        monitor.setRate(.resting)
-        if !isScreenLocked { scheduleReveal() }
+        if !isScreenLocked, heldPicture != nil || preferences.effect.livePicture {
+            // Follow the lid from the first sample after wake.
+            unfoldPending = true
+            monitor.setRate(.moving)
+        } else {
+            monitor.setRate(.resting)
+            if !isScreenLocked { scheduleReveal() }
+        }
     }
 
     private func screensChanged() {

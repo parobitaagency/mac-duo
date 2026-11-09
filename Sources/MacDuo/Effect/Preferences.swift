@@ -60,7 +60,7 @@ final class Preferences {
             Key.isEnabled: true,
             Key.focusOnWake: true,
             Key.showsAngleInMenuBar: false,
-            Key.checksForUpdates: true,
+            Key.checksForUpdates: false, // a local build: the upstream update would replace it
             Key.hasCompletedOnboarding: false,
         ])
         // The look was retuned in schema 2 (no sheen or grain, reference
