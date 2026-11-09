@@ -22,9 +22,10 @@ final class Preferences {
         static let clearsWhenStill = "clearsWhenStill"
         static let stillDelay = "stillDelay"
         static let hidesMenuBarIcon = "hidesMenuBarIcon"
+        static let lockScreenPicture = "lockScreenPicture"
         static let all = [effect, isEnabled, focusOnWake, showsAngleInMenuBar, checksForUpdates,
                           hasCompletedOnboarding, lastUpdateCheck, skippedUpdateVersion,
-                          clearsWhenStill, stillDelay, hidesMenuBarIcon]
+                          clearsWhenStill, stillDelay, hidesMenuBarIcon, lockScreenPicture]
     }
 
     private let defaults: UserDefaults
@@ -55,6 +56,10 @@ final class Preferences {
     /// The menu bar item is hidden; opening the app again shows it.
     var hidesMenuBarIcon: Bool {
         didSet { defaults.set(hidesMenuBarIcon, forKey: Key.hidesMenuBarIcon) }
+    }
+    /// The picture folded over the lock screen; empty means the desktop picture.
+    var lockScreenPicture: String {
+        didSet { defaults.set(lockScreenPicture, forKey: Key.lockScreenPicture) }
     }
     var hasCompletedOnboarding: Bool {
         didSet { defaults.set(hasCompletedOnboarding, forKey: Key.hasCompletedOnboarding) }
@@ -97,6 +102,7 @@ final class Preferences {
         clearsWhenStill = defaults.bool(forKey: Key.clearsWhenStill)
         stillDelay = defaults.double(forKey: Key.stillDelay)
         hidesMenuBarIcon = defaults.bool(forKey: Key.hidesMenuBarIcon)
+        lockScreenPicture = defaults.string(forKey: Key.lockScreenPicture) ?? ""
         lastUpdateCheck = defaults.object(forKey: Key.lastUpdateCheck) as? Date
         skippedUpdateVersion = defaults.string(forKey: Key.skippedUpdateVersion)
     }
@@ -115,6 +121,7 @@ final class Preferences {
         clearsWhenStill = defaults.bool(forKey: Key.clearsWhenStill)
         stillDelay = defaults.double(forKey: Key.stillDelay)
         hidesMenuBarIcon = defaults.bool(forKey: Key.hidesMenuBarIcon)
+        lockScreenPicture = defaults.string(forKey: Key.lockScreenPicture) ?? ""
         lastUpdateCheck = nil
         skippedUpdateVersion = nil
     }

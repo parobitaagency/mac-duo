@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import DuoCore
 
 struct SettingsView: View {
@@ -88,6 +90,28 @@ private struct GeneralSettings: View {
                     }
                 }
                 Text("A lid left partway eases back to the clear desktop. Move it again to fold.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                LabeledContent("Lock screen picture") {
+                    HStack {
+                        Text(preferences.lockScreenPicture.isEmpty
+                             ? "Desktop picture"
+                             : URL(fileURLWithPath: preferences.lockScreenPicture).lastPathComponent)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(.secondary)
+                        Button("Choose…") { chooseLockScreenPicture() }
+                        if !preferences.lockScreenPicture.isEmpty {
+                            Button("Use Desktop") {
+                                preferences.lockScreenPicture = ""
+                                controller.reloadLockScreenPicture()
+                            }
+                        }
+                    }
+                }
+                Text("Folded over the lock screen when the Mac is locked. Pick the picture your lock screen shows.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -319,4 +343,19 @@ private struct AdvancedSettings: View {
         }
     }
 
+}
+
+extension GeneralSettings {
+    /// Picks the picture folded over the lock screen.
+    func chooseLockScreenPicture() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Choose the picture your lock screen shows"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        preferences.lockScreenPicture = url.path
+        controller.reloadLockScreenPicture()
+    }
 }

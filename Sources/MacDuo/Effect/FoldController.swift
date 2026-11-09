@@ -686,9 +686,15 @@ final class FoldController {
     /// Never while the screen is locked.
     /// Decodes the desktop picture at screen size, cropped to fill, off the
     /// main thread. Done at sleep so a locked wake has it ready.
+    /// The lock screen picture changed in Settings.
+    func reloadLockScreenPicture() { loadWallpaper() }
+
     private func loadWallpaper() {
+        let chosen = preferences.lockScreenPicture
+        let custom = chosen.isEmpty ? nil : URL(fileURLWithPath: chosen)
         guard let screen = NSScreen.builtIn,
-              let url = NSWorkspace.shared.desktopImageURL(for: screen) else {
+              let url = custom.flatMap({ FileManager.default.fileExists(atPath: $0.path) ? $0 : nil })
+                ?? NSWorkspace.shared.desktopImageURL(for: screen) else {
             wallpaper = nil
             return
         }
