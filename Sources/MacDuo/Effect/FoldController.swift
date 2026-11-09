@@ -58,6 +58,9 @@ final class FoldController {
     /// Set on wake: the next samples may start the fold in reverse, following
     /// the lid as it opens.
     @ObservationIgnored private var unfoldPending = false
+    /// The Mac (or its display) slept since the screen was last unlocked.
+    /// A lock and unlock with no sleep in between plays nothing.
+    @ObservationIgnored private var sleptSinceUnlock = false
     /// Where and since when the lid has rested, for clearing a held fold.
     @ObservationIgnored private var stillAnchor: (angle: Double, since: CFTimeInterval) = (0, 0)
     /// A running clear-for-stillness: the fold eases back to open from here.
@@ -571,7 +574,9 @@ final class FoldController {
                 guard let self else { return }
                 let wasLocked = self.isScreenLocked
                 self.isScreenLocked = false
-                if wasLocked, !self.isSuspended { self.armUnfold() }
+                let slept = self.sleptSinceUnlock
+                self.sleptSinceUnlock = false
+                if wasLocked, !self.isSuspended, slept { self.armUnfold() }
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
@@ -595,6 +600,7 @@ final class FoldController {
     private func suspend() {
         guard !isSuspended else { return }
         isSuspended = true
+        sleptSinceUnlock = true
         Log.app.notice("suspend")
         FileLog.write("app", "suspend")
         reveal = nil
@@ -618,7 +624,10 @@ final class FoldController {
         monitor.resetBaseline()
         // Poll fast from the start: the lid is usually still opening.
         monitor.setRate(.moving)
-        if !isScreenLocked { armUnfold() }
+        if !isScreenLocked {
+            sleptSinceUnlock = false
+            armUnfold()
+        }
     }
 
     /// After wake, or after the unlock that follows it: the next sample
