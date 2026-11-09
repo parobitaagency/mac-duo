@@ -696,13 +696,25 @@ final class FoldController {
         }
         let width = Int(screen.frame.width * screen.backingScaleFactor)
         let height = Int(screen.frame.height * screen.backingScaleFactor)
+        let useAerial = custom == nil
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let image = Self.decodeWallpaper(url, width: width, height: height)
+            var image: CGImage?
+            var name = url.lastPathComponent
+            // An Aerial wallpaper (Tahoe and friends): macOS reports a
+            // stand-in picture, so take the video's first frame instead.
+            if useAerial, let aerial = AerialWallpaper.currentFrame(maxPixelSize: max(width, height)) {
+                image = Self.fill(aerial.image, width: width, height: height)
+                name = aerial.name
+            }
+            if image == nil {
+                image = Self.decodeWallpaper(url, width: width, height: height)
+            }
+            let result = image
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    self.wallpaper = image
-                    FileLog.write("lock", "wallpaper \(image == nil ? "unavailable" : "ready") from \(url.lastPathComponent)")
+                    self.wallpaper = result
+                    FileLog.write("lock", "wallpaper \(result == nil ? "unavailable" : "ready") from \(name)")
                 }
             }
         }
@@ -715,7 +727,13 @@ final class FoldController {
             kCGImageSourceThumbnailMaxPixelSize: max(width, height),
             kCGImageSourceCreateThumbnailWithTransform: true,
         ]
-        guard let decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+        guard let decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return fill(decoded, width: width, height: height)
+    }
+
+    /// Scales and crops a picture to fill the screen, centred.
+    nonisolated private static func fill(_ decoded: CGImage, width: Int, height: Int) -> CGImage? {
+        guard width > 0, height > 0,
               let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
