@@ -5,7 +5,7 @@ on:
   pull_request:
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-15-intel  # arm64 runners are often queued out; the build is universal
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode
@@ -15,7 +15,7 @@ jobs:
       - name: Tests
         run: swift test
       - name: Build app
-        run: Scripts/build.sh
+        run: Scripts/build.sh --universal
       - name: Package
         run: Scripts/package-dmg.sh
       - uses: actions/upload-artifact@v4
