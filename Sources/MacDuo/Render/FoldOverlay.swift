@@ -33,6 +33,8 @@ private final class MetalHostView: NSView {
 final class FoldOverlay {
 
     private var window: OverlayWindow?
+    /// The next window goes above the lock screen (a lid opened on a locked Mac).
+    var aboveLockScreen = false
     private var fadingWindow: OverlayWindow?
     private var presenceWindow: OverlayWindow?
     private(set) var renderer: DuoRenderer?
@@ -143,6 +145,7 @@ final class FoldOverlay {
         window.setFrame(screen.frame, display: false)
         window.alphaValue = 0
         window.orderFrontRegardless()
+        if aboveLockScreen { LockScreenSpace.add(window) }
         revealed = false
         self.window = window
     }
@@ -173,6 +176,7 @@ final class FoldOverlay {
         buildToken += 1
         renderer?.release()
         guard animated else {
+            LockScreenSpace.remove(window)
             window.orderOut(nil)
             window.close()
             return
@@ -185,6 +189,7 @@ final class FoldOverlay {
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated {
                 if let self, self.fadingWindow === window { self.fadingWindow = nil }
+                LockScreenSpace.remove(window)
                 window.orderOut(nil)
                 window.close()
             }

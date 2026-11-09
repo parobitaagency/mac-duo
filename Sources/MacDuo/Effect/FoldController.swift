@@ -61,6 +61,11 @@ final class FoldController {
     /// The Mac (or its display) slept since the screen was last unlocked.
     /// A lock and unlock with no sleep in between plays nothing.
     @ObservationIgnored private var sleptSinceUnlock = false
+    /// The desktop picture, loaded at sleep: what a locked Mac shows behind
+    /// the lock screen, so the unfold over it never reveals the desktop.
+    @ObservationIgnored private var wallpaper: CGImage?
+    /// The running unfold plays over the lock screen with the wallpaper.
+    @ObservationIgnored private var lockedUnfold = false
     /// Where and since when the lid has rested, for clearing a held fold.
     @ObservationIgnored private var stillAnchor: (angle: Double, since: CFTimeInterval) = (0, 0)
     /// A running clear-for-stillness: the fold eases back to open from here.
@@ -316,15 +321,18 @@ final class FoldController {
     private func beginUnfold(tracker: AngleTracker, at time: CFTimeInterval) {
         unfoldPending = false
         let effect = preferences.effect
-        guard preferences.isEnabled, !isScreenLocked, !isActive, !isPreviewing,
-              ScreenRecordingPermission.isGranted,
+        let locked = lockedUnfold && isScreenLocked && wallpaper != nil
+        guard preferences.isEnabled, !isScreenLocked || locked, !isActive, !isPreviewing,
+              locked || ScreenRecordingPermission.isGranted,
               tracker.angle < effect.startAngle else {
             heldPicture = nil
             // Woken with the lid already open (a key press, an idle display):
             // nothing to follow, so the timed focus-on-wake stands in.
-            if !isScreenLocked, !isActive { scheduleReveal() }
+            if !isScreenLocked, !isActive, !lockedUnfold { scheduleReveal() }
+            lockedUnfold = false
             return
         }
+        lockedUnfold = locked
         reveal = nil
         decider.forceActive(at: time)
         FileLog.write("fold", String(format: "unfold on wake from %.1f°, held picture %d", tracker.angle, heldPicture == nil ? 0 : 1))
@@ -335,6 +343,7 @@ final class FoldController {
     private func endFold() {
         guard isActive else { return }
         isActive = false
+        lockedUnfold = false
         Log.fold.notice("fold ends at \(self.monitor.tracker.angle, format: .fixed(precision: 1))°")
         FileLog.write("fold", String(format: "ends at %.1f°", monitor.tracker.angle))
         stopDisplayLink()
@@ -352,6 +361,12 @@ final class FoldController {
 
     private func present() {
         guard let screen = NSScreen.builtIn else { return }
+        if lockedUnfold, let image = wallpaper {
+            overlay.aboveLockScreen = true
+            overlay.showStill(image, on: screen) { [weak self] in self?.startDisplayLink() }
+            return
+        }
+        overlay.aboveLockScreen = false
         if preferences.effect.livePicture, overlay.showLive(on: screen) {
             // Usually warm already, from the lid closing towards the start
             // angle. A fold that starts without that (a lid already below
@@ -574,9 +589,15 @@ final class FoldController {
                 guard let self else { return }
                 let wasLocked = self.isScreenLocked
                 self.isScreenLocked = false
-                let slept = self.sleptSinceUnlock
                 self.sleptSinceUnlock = false
-                if wasLocked, !self.isSuspended, slept { self.armUnfold() }
+                // The unfold, if any, already played over the lock screen.
+                // Unlocking plays nothing; a wallpaper fold still up gives
+                // way to the desktop.
+                self.unfoldPending = false
+                if wasLocked, self.lockedUnfold, self.isActive {
+                    self.decider.forceIdle()
+                    self.endFold()
+                }
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
@@ -601,6 +622,7 @@ final class FoldController {
         guard !isSuspended else { return }
         isSuspended = true
         sleptSinceUnlock = true
+        loadWallpaper()
         Log.app.notice("suspend")
         FileLog.write("app", "suspend")
         reveal = nil
@@ -627,12 +649,59 @@ final class FoldController {
         if !isScreenLocked {
             sleptSinceUnlock = false
             armUnfold()
+        } else if preferences.isEnabled, wallpaper != nil {
+            // Locked: unfold over the lock screen, from the wallpaper.
+            lockedUnfold = true
+            unfoldPending = true
         }
     }
 
     /// After wake, or after the unlock that follows it: the next sample
     /// starts the fold in reverse if the lid is still below the start angle.
     /// Never while the screen is locked.
+    /// Decodes the desktop picture at screen size, cropped to fill, off the
+    /// main thread. Done at sleep so a locked wake has it ready.
+    private func loadWallpaper() {
+        guard let screen = NSScreen.builtIn,
+              let url = NSWorkspace.shared.desktopImageURL(for: screen) else {
+            wallpaper = nil
+            return
+        }
+        let width = Int(screen.frame.width * screen.backingScaleFactor)
+        let height = Int(screen.frame.height * screen.backingScaleFactor)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let image = Self.decodeWallpaper(url, width: width, height: height)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.wallpaper = image
+                    FileLog.write("lock", "wallpaper \(image == nil ? "unavailable" : "ready") from \(url.lastPathComponent)")
+                }
+            }
+        }
+    }
+
+    nonisolated private static func decodeWallpaper(_ url: URL, width: Int, height: Int) -> CGImage? {
+        guard width > 0, height > 0, let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(width, height),
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        guard let decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+        else { return nil }
+        // Aspect fill, centred: what the lock screen shows.
+        let scale = max(CGFloat(width) / CGFloat(decoded.width), CGFloat(height) / CGFloat(decoded.height))
+        let drawn = CGSize(width: CGFloat(decoded.width) * scale, height: CGFloat(decoded.height) * scale)
+        context.interpolationQuality = .high
+        context.draw(decoded, in: CGRect(x: (CGFloat(width) - drawn.width) / 2, y: (CGFloat(height) - drawn.height) / 2,
+                                         width: drawn.width, height: drawn.height))
+        return context.makeImage()
+    }
+
     private func armUnfold() {
         guard !isScreenLocked else { return }
         if heldPicture != nil || preferences.effect.livePicture {
