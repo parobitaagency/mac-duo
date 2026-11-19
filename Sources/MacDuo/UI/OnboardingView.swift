@@ -102,7 +102,7 @@ struct OnboardingView: View {
             page(
                 icon: "laptopcomputer",
                 title: "You're set",
-                body: "Close the lid slowly and watch. Mac Duo lives in the menu bar: change the style, preview the fold, or turn it off from there."
+                body: "Close the lid slowly and watch. Mac Duo runs in the background: open it from Applications or Spotlight to change the style, preview the fold, or turn it off."
             )
             VStack(spacing: 14) {
                 Button {

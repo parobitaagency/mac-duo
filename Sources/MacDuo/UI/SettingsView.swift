@@ -116,13 +116,17 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
             Section {
-                Toggle("Hide the menu bar icon", isOn: $preferences.hidesMenuBarIcon)
-                Text("Open Mac Duo from Finder or Spotlight to bring it back.")
+                Toggle("Check for updates automatically", isOn: $preferences.checksForUpdates)
+                HStack {
+                    Button("Check Now") {
+                        DistributedNotificationCenter.default().post(name: Notification.Name("com.mac-duo.app.checkUpdates"), object: nil)
+                    }
+                    Spacer()
+                    Button("Quit Mac Duo") { NSApp.terminate(nil) }
+                }
+                Text("Closing this window leaves Mac Duo running. Open it from Applications or Spotlight to come back here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Toggle("Show lid angle in the menu bar", isOn: $preferences.showsAngleInMenuBar)
-                    .disabled(!controller.sensorAvailable)
-                Toggle("Check for updates automatically", isOn: $preferences.checksForUpdates)
             }
             Section {
                 LabeledContent("Screen Recording") {
