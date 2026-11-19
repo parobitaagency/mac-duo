@@ -45,10 +45,12 @@ final class StatusItemController: NSObject, NSMenuDelegate {
         statusItem.button?.imagePosition = .imageLeading
         statusItem.isVisible = !preferences.hidesMenuBarIcon
         refresh()
-        let timer = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+        // Twice a second is plenty for a menu bar mark; the fold itself does
+        // not depend on it.
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refresh() }
         }
-        timer.tolerance = 0.05
+        timer.tolerance = 0.15
         RunLoop.main.add(timer, forMode: .common)
         refreshTimer = timer
     }
@@ -225,13 +227,16 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             statusItem.isVisible = !preferences.hidesMenuBarIcon
         }
         guard let button = statusItem.button else { return }
-        let angle = Int(controller.angle.rounded())
         let active = controller.isActive
+        // Redraw only for a real change: a resting lid reads a few hundredths
+        // either side of a half degree, and redrawing on every flip of the
+        // rounding kept the menu bar busy for nothing.
+        let angle = abs(controller.angle - Double(lastGlyph.angle)) >= 1 ? Int(controller.angle.rounded()) : lastGlyph.angle
         if lastGlyph.angle != angle || lastGlyph.active != active {
             lastGlyph = (angle, active)
             button.image = MenuBarGlyph.image(angle: controller.sensorAvailable ? controller.angle : 108, active: active)
         }
-        let title = preferences.showsAngleInMenuBar && controller.sensorAvailable ? String(format: " %.0f°", controller.angle) : ""
+        let title = preferences.showsAngleInMenuBar && controller.sensorAvailable ? " \(angle)°" : ""
         if button.title != title { button.title = title }
         button.appearsDisabled = !preferences.isEnabled || controller.status == .noSensor
     }

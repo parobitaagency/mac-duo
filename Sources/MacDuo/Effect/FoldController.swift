@@ -256,7 +256,9 @@ final class FoldController {
     private func publish(_ value: Double, at time: CFTimeInterval) {
         guard time - lastPublish > 0.1 || abs(value - angle) > 1 else { return }
         lastPublish = time
-        if abs(angle - value) > 0.005 { angle = value }
+        // Sensor noise on a resting lid is a few hundredths: publishing it
+        // woke every observer ten times a second.
+        if abs(angle - value) >= 0.05 { angle = value }
     }
 
     // MARK: Warm-up
@@ -553,10 +555,10 @@ final class FoldController {
     /// Screen Recording can be granted while the app runs; notice it, log it,
     /// and get the capture filters ready.
     private func watchPermission() {
-        let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.checkPermission() }
         }
-        timer.tolerance = 1
+        timer.tolerance = 2
         RunLoop.main.add(timer, forMode: .common)
         permissionTimer = timer
     }
