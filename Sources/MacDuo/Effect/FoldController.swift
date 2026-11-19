@@ -40,6 +40,16 @@ final class FoldController {
     @ObservationIgnored private var displayLink: CADisplayLink?
     @ObservationIgnored private var lastFrame: CFTimeInterval = 0
     @ObservationIgnored private var lastPublish: CFTimeInterval = 0
+    /// When the latest folds started, for the repeat guard.
+    @ObservationIgnored private var recentFolds: [CFTimeInterval] = []
+    /// No new fold (and no warm-up) until this time.
+    @ObservationIgnored private var restUntil: CFTimeInterval = 0
+
+    /// Opening and shutting the lid over and over only burns energy: after
+    /// three folds within 15 seconds, the lid closes plainly for 2 minutes.
+    private static let repeatCount = 3
+    private static let repeatWindow: CFTimeInterval = 15
+    private static let restLength: CFTimeInterval = 120
     @ObservationIgnored private var snapshotTimer: Timer?
     @ObservationIgnored private var captureInFlight = false
     @ObservationIgnored private var streamRestarts = 0
@@ -228,7 +238,8 @@ final class FoldController {
         decider.startAngle = effect.startAngle
         decider.armCeiling = Self.armCeiling
         let previous = decider.phase
-        let phase = decider.update(tracker: tracker, enabled: preferences.isEnabled && reveal == nil, time: time)
+        let resting = time < restUntil && !isActive
+        let phase = decider.update(tracker: tracker, enabled: preferences.isEnabled && reveal == nil && !resting, time: time)
 
         switch (previous, phase) {
         case (_, .active) where !isActive:
@@ -310,6 +321,14 @@ final class FoldController {
 
     // MARK: Fold
 
+    private func noteFold(at time: CFTimeInterval) {
+        recentFolds = recentFolds.filter { time - $0 < Self.repeatWindow } + [time]
+        guard recentFolds.count >= Self.repeatCount else { return }
+        recentFolds.removeAll()
+        restUntil = time + Self.restLength
+        FileLog.write("fold", "\(Self.repeatCount) folds in \(Int(Self.repeatWindow)) s: resting for \(Int(Self.restLength)) s")
+    }
+
     private func beginFold(at time: CFTimeInterval, snapping: Bool) {
         guard ScreenRecordingPermission.isGranted else {
             Log.fold.notice("fold wanted but screen recording is not granted")
@@ -319,6 +338,7 @@ final class FoldController {
         }
         isActive = true
         activationTime = time
+        if !isPreviewing { noteFold(at: time) }
         drewSettledFrame = false
         stillClear = nil
         stillAnchor = (monitor.tracker.angle, time)
